@@ -277,39 +277,42 @@ float compute_score(int64_t _Ec, uint32_t _vocab_size, float count_entropy, int3
     auto ca = (float) _ca; auto cb = (float) _cb; auto cab = (float) _cab;
 
     if (bca < (float) min_freq or bcb < (float) min_freq or _cab < min_freq){
-        return (float) 1.;
+        return (float) -1.;
     }
 
-    auto term = cab*log(cab);
+    auto term = cab*log2(cab);
     if (bca != 0.){
-        term = term + bca * log(bca);
+        term = term + bca * log2(bca);
     }
     if (bcb != 0.){
-        term = term + bcb * log(bcb);
+        term = term + bcb * log2(bcb);
     }
     auto new_vocab_size = vocab_size + 1.;
-    return (count_entropy - ca*log(ca) - cb*log(cb) + term)/bEc - count_entropy/Ec + log(new_vocab_size/vocab_size) + log(Ec/bEc);
+    //             score = (count_entropy - ca*log(ca) - cb*log(cb) + new_terms)/bEc - count_entropy/Ec + log(new_vocab_size/vocab_size) + log(Ec/bEc)
+
+    return (count_entropy - ca*log2(ca) - cb*log2(cb) + term)/bEc - count_entropy/Ec + log2(new_vocab_size/vocab_size) + log2(Ec/bEc);
 
 }
 
 
 
 void find_maxp(vector<pair<int32_t, tp>> &contiguous_counts, vector<int32_t> &token_counts, int32_t min_freq,
-               tp &maxp, int32_t &max_score) {
+               tp &maxp, float &max_score, int32_t &maxc) {
   float count_entropy = 0.;
   int64_t Ec = 0;
   for (auto const& c: token_counts){
-    count_entropy += ((float) c) * log((float) c);
+    if (c>0){
+    count_entropy += ((float) c) * log2((float) c);
+    }
     Ec += (int64_t) c;
   }
-  max_score = -1;
+  max_score = -2;
   for (auto &x : contiguous_counts) {
     auto score = compute_score(Ec,token_counts.size(),count_entropy,min_freq,token_counts[x.second.first],token_counts[x.second.second],x.first);
-    if (score > max_score) {
+    if ((score > max_score) or (score == max_score and x.second < maxp)) {
       max_score = score;
       maxp = x.second;
-    } else if (score == max_score and x.second < maxp) {
-      maxp = x.second;
+      maxc = x.first;
     }
   }
 }
@@ -363,13 +366,14 @@ void learnbpe(const uint32_t min_freq, const char *inputFile1,
 
   tp cur_pair;
   int32_t max_c = 0;
+  float max_score = 0.;
   tp max_p;
   for (uint32_t wi = 0; wi < words.size(); wi++) {
     count_in_word(words[wi], wi, counts[wi], pair_counts, contiguous_counts,
                   where_to_update);
   }
-  find_maxp(contiguous_counts, token_counts, min_freq, max_p, max_c);
-  while (max_c > 0) {
+  find_maxp(contiguous_counts, token_counts, min_freq, max_p, max_score, max_c);
+  while (max_score > 0.) {
     // create new token for pair. replace
     auto new_token = int_to_token[max_p.first] + int_to_token[max_p.second];
     cout << int_to_token[max_p.first] << " " << int_to_token[max_p.second]
@@ -445,7 +449,7 @@ void learnbpe(const uint32_t min_freq, const char *inputFile1,
     if (pair_counts.find(max_p) != pair_counts.end()){
       pair_counts[max_p]->first = 0;
     }
-    find_maxp(contiguous_counts, token_counts, min_freq, max_p, max_c);
+    find_maxp(contiguous_counts, token_counts, min_freq, max_p, max_score, max_c);
   }
 }
 
