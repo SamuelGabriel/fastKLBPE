@@ -19,6 +19,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <cmath>
 
 
 namespace fastBPE {
@@ -166,8 +167,8 @@ struct pair_hash {
 
 void tokenize(const unordered_map<string, uint32_t> &word_count,
               unordered_map<string, uint32_t> &token_to_int,
-              vector<string> &int_to_token, vector<list<uint32_t>> &words,
-              vector<int32_t> &counts) {
+              vector<string> &int_to_token, vector<int32_t> &token_counts,
+              vector<list<uint32_t>> &words, vector<int32_t> &counts) {
 
   for (auto &x : word_count) {
     auto &word = x.first;
@@ -186,9 +187,12 @@ void tokenize(const unordered_map<string, uint32_t> &word_count,
         auto new_token = word.substr(lastStart, pos - lastStart);
         if (token_to_int.count(new_token) == 0) {
           int_to_token.push_back(new_token);
+          token_counts.push_back(0);
           token_to_int[new_token] = int_to_token.size() - 1;
         }
-        current_word.push_back(token_to_int[new_token]);
+        auto new_token_id = token_to_int[new_token];
+        token_counts[new_token_id]++;
+        current_word.push_back(new_token_id);
         lastStart = pos;
       }
       pos++;
@@ -196,9 +200,12 @@ void tokenize(const unordered_map<string, uint32_t> &word_count,
     auto new_token = word.substr(lastStart, string::npos) + kEndWord;
     if (token_to_int.count(new_token) == 0) {
       int_to_token.push_back(new_token);
+      token_counts.push_back(0);
       token_to_int[new_token] = int_to_token.size() - 1;
     }
-    current_word.push_back(token_to_int[new_token]);
+    auto new_token_id = token_to_int[new_token];
+    token_counts[new_token_id]++;
+    current_word.push_back(new_token_id);
   }
 }
 
@@ -263,14 +270,45 @@ void count_in_word(
   }
 }
 
-void find_maxp(vector<pair<int32_t, tp>> &contiguous_counts, tp &maxp,
-               int32_t &max_c) {
-  max_c = 0;
+float compute_score(int64_t _Ec, uint32_t _vocab_size, float count_entropy, int32_t min_freq,
+                        int32_t _ca, int32_t _cb, int32_t _cab){
+    auto bEc = (float) _Ec - (int64_t) _cab; auto Ec = (float) _Ec; auto vocab_size = (float) _vocab_size;
+    auto bca = (float) _ca - _cab; auto bcb = (float) _cb - _cab;
+    auto ca = (float) _ca; auto cb = (float) _cb; auto cab = (float) _cab;
+
+    if (bca < (float) min_freq or bcb < (float) min_freq or _cab < min_freq){
+        return (float) 1.;
+    }
+
+    auto term = cab*log(cab);
+    if (bca != 0.){
+        term = term + bca * log(bca);
+    }
+    if (bcb != 0.){
+        term = term + bcb * log(bcb);
+    }
+    auto new_vocab_size = vocab_size + 1.;
+    return (count_entropy - ca*log(ca) - cb*log(cb) + term)/bEc - count_entropy/Ec + log(new_vocab_size/vocab_size) + log(Ec/bEc);
+
+}
+
+
+
+void find_maxp(vector<pair<int32_t, tp>> &contiguous_counts, vector<int32_t> &token_counts, int32_t min_freq,
+               tp &maxp, int32_t &max_score) {
+  float count_entropy = 0.;
+  int64_t Ec = 0;
+  for (auto const& c: token_counts){
+    count_entropy += ((float) c) * log((float) c);
+    Ec += (int64_t) c;
+  }
+  max_score = -1;
   for (auto &x : contiguous_counts) {
-    if (x.first > max_c) {
-      max_c = x.first;
+    auto score = compute_score(Ec,token_counts.size(),count_entropy,min_freq,token_counts[x.second.first],token_counts[x.second.second],x.first);
+    if (score > max_score) {
+      max_score = score;
       maxp = x.second;
-    } else if (x.first == max_c and x.second < maxp) {
+    } else if (score == max_score and x.second < maxp) {
       maxp = x.second;
     }
   }
@@ -298,7 +336,7 @@ void getvocab(const char *inputFile1, const char *inputFile2) {
     cout << element.first << " " << element.second << endl;
 }
 
-void learnbpe(const uint32_t kNPairs, const char *inputFile1,
+void learnbpe(const uint32_t min_freq, const char *inputFile1,
               const char *inputFile2) {
   // get vocab
   unordered_map<string, uint32_t> word_count;
@@ -310,11 +348,12 @@ void learnbpe(const uint32_t kNPairs, const char *inputFile1,
   // a token is an int, it represents a string
   unordered_map<string, uint32_t> token_to_int;
   vector<string> int_to_token;
+  vector<int32_t> token_counts;
 
   vector<list<uint32_t>> words;
   vector<int32_t> counts;
 
-  tokenize(word_count, token_to_int, int_to_token, words, counts);
+  tokenize(word_count, token_to_int, int_to_token, token_counts, words, counts);
 
   vector<pair<int32_t, tp>> contiguous_counts;
   contiguous_counts.reserve(kMaxPairs);
@@ -329,8 +368,8 @@ void learnbpe(const uint32_t kNPairs, const char *inputFile1,
     count_in_word(words[wi], wi, counts[wi], pair_counts, contiguous_counts,
                   where_to_update);
   }
-  find_maxp(contiguous_counts, max_p, max_c);
-  for (size_t i = 0; i < kNPairs; i++) {
+  find_maxp(contiguous_counts, token_counts, min_freq, max_p, max_c);
+  while (max_c > 0) {
     // create new token for pair. replace
     auto new_token = int_to_token[max_p.first] + int_to_token[max_p.second];
     cout << int_to_token[max_p.first] << " " << int_to_token[max_p.second]
@@ -338,6 +377,9 @@ void learnbpe(const uint32_t kNPairs, const char *inputFile1,
 
     uint32_t new_token_id = int_to_token.size();
     int_to_token.push_back(new_token);
+    token_counts.push_back(max_c);
+    token_counts[max_p.first] = token_counts[max_p.first] - max_c;
+    token_counts[max_p.second] = token_counts[max_p.second] - max_c;
     token_to_int[new_token] = new_token_id;
     max_c = 0;
     auto change_count = [&](tp pair, int32_t v, uint32_t wi) {
@@ -403,7 +445,7 @@ void learnbpe(const uint32_t kNPairs, const char *inputFile1,
     if (pair_counts.find(max_p) != pair_counts.end()){
       pair_counts[max_p]->first = 0;
     }
-    find_maxp(contiguous_counts, max_p, max_c);
+    find_maxp(contiguous_counts, token_counts, min_freq, max_p, max_c);
   }
 }
 
