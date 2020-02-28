@@ -20,6 +20,7 @@
 #include <unordered_set>
 #include <vector>
 #include <cmath>
+#include <assert.h>
 
 
 namespace fastBPE {
@@ -288,9 +289,7 @@ float compute_score(int64_t _Ec, uint32_t _vocab_size, float count_entropy, int3
         term = term + bcb * log2(bcb);
     }
     auto new_vocab_size = vocab_size + 1.;
-    //             score = (count_entropy - ca*log(ca) - cb*log(cb) + new_terms)/bEc - count_entropy/Ec + log(new_vocab_size/vocab_size) + log(Ec/bEc)
-
-    return (count_entropy - ca*log2(ca) - cb*log2(cb) + term)/bEc - count_entropy/Ec + log2(new_vocab_size/vocab_size) + log2(Ec/bEc);
+    return -((count_entropy - ca*log2(ca) - cb*log2(cb) + term)/bEc - count_entropy/Ec + log2(new_vocab_size/vocab_size) + log2(Ec/bEc));
 
 }
 
@@ -301,14 +300,15 @@ void find_maxp(vector<pair<int32_t, tp>> &contiguous_counts, vector<int32_t> &to
   float count_entropy = 0.;
   int64_t Ec = 0;
   for (auto const& c: token_counts){
-    if (c>0){
     count_entropy += ((float) c) * log2((float) c);
-    }
     Ec += (int64_t) c;
   }
-  max_score = -2;
+  assert (isnormal(count_entropy));
+  max_score = -2.;
+  maxc = 0;
   for (auto &x : contiguous_counts) {
     auto score = compute_score(Ec,token_counts.size(),count_entropy,min_freq,token_counts[x.second.first],token_counts[x.second.second],x.first);
+    // other condition: ((score > 0) and (x.first > maxc or (x.first == maxc and x.second < maxp))
     if ((score > max_score) or (score == max_score and x.second < maxp)) {
       max_score = score;
       maxp = x.second;
@@ -339,6 +339,41 @@ void getvocab(const char *inputFile1, const char *inputFile2) {
     cout << element.first << " " << element.second << endl;
 }
 
+void print_kldiv(vector<int32_t> &counts){
+  float entropy = 0.;
+  float total_count = 0.;
+  // print sorted vocab
+  for (auto c : counts){
+    if (c > 0) entropy += c * log2(c);
+    else cout << "Zero in Counts..." << endl;
+    total_count += c;
+  }
+  cout << "KL Divergence from uniform is: " << entropy / total_count - log2(total_count) + log2(counts.size()) << "on a vocab of size " << counts.size() << endl;
+}
+
+void getkldiv(const char *inputFile1, const char *inputFile2) {
+  // get vocab
+  unordered_map<string, uint32_t> word_count;
+  readText(inputFile1, word_count);
+  if (strcmp(inputFile2, "") != 0) {
+    readText(inputFile2, word_count);
+  }
+
+  // sort vocab
+  auto compFunctor = [](pair<string, int> elem1, pair<string, int> elem2) {
+    return elem1.second > elem2.second ||
+           (elem1.second == elem2.second && elem1.first < elem2.first);
+  };
+  set<pair<string, int>, decltype(compFunctor)> sorted_vocab(
+      word_count.begin(), word_count.end(), compFunctor);
+  assert(word_count.size() == sorted_vocab.size());
+  vector<int32_t> counts;
+  for (auto element: sorted_vocab)
+    counts.push_back((int32_t) element.second);
+  print_kldiv(counts);
+
+}
+
 void learnbpe(const uint32_t min_freq, const char *inputFile1,
               const char *inputFile2) {
   // get vocab
@@ -365,8 +400,8 @@ void learnbpe(const uint32_t min_freq, const char *inputFile1,
   unordered_map<tp, unordered_set<uint32_t>, pair_hash> where_to_update;
 
   tp cur_pair;
-  int32_t max_c = 0;
-  float max_score = 0.;
+  int32_t max_c;
+  float max_score;
   tp max_p;
   for (uint32_t wi = 0; wi < words.size(); wi++) {
     count_in_word(words[wi], wi, counts[wi], pair_counts, contiguous_counts,
@@ -381,10 +416,11 @@ void learnbpe(const uint32_t min_freq, const char *inputFile1,
 
     uint32_t new_token_id = int_to_token.size();
     int_to_token.push_back(new_token);
-    token_counts.push_back(max_c);
-    token_counts[max_p.first] = token_counts[max_p.first] - max_c;
-    token_counts[max_p.second] = token_counts[max_p.second] - max_c;
     token_to_int[new_token] = new_token_id;
+    token_counts.push_back(max_c);
+    token_counts[max_p.first] -= max_c;
+    if (max_p.second != max_p.first) token_counts[max_p.second] -= max_c;
+
     max_c = 0;
     auto change_count = [&](tp pair, int32_t v, uint32_t wi) {
       auto it = pair_counts.find(pair);

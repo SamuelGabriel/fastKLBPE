@@ -26,6 +26,9 @@ int main(int argc, char **argv) {
   if (command == "getvocab") {
     assert(argc == 3 || argc == 4);
     getvocab(argv[2], argc == 4 ? argv[3] : "");
+  } else if (command == "getkldiv") {
+    assert(argc == 3 || argc == 4);
+    getkldiv(argv[2], argc == 4 ? argv[3] : "");
   } else if (command == "learnbpe") {
     assert(argc == 4 || argc == 5);
     learnbpe(stoi(argv[2]), argv[3], argc == 5 ? argv[4] : "");
