@@ -192,7 +192,7 @@ void tokenize(const unordered_map<string, uint32_t> &word_count,
           token_to_int[new_token] = int_to_token.size() - 1;
         }
         auto new_token_id = token_to_int[new_token];
-        token_counts[new_token_id]++;
+        token_counts[new_token_id]+=x.second;
         current_word.push_back(new_token_id);
         lastStart = pos;
       }
@@ -205,7 +205,7 @@ void tokenize(const unordered_map<string, uint32_t> &word_count,
       token_to_int[new_token] = int_to_token.size() - 1;
     }
     auto new_token_id = token_to_int[new_token];
-    token_counts[new_token_id]++;
+    token_counts[new_token_id] += x.second;
     current_word.push_back(new_token_id);
   }
 }
@@ -308,7 +308,7 @@ void find_maxp(vector<pair<int32_t, tp>> &contiguous_counts, vector<int32_t> &to
   maxc = 0;
   for (auto &x : contiguous_counts) {
     auto score = compute_score(Ec,token_counts.size(),count_entropy,min_freq,token_counts[x.second.first],token_counts[x.second.second],x.first);
-    // other condition: ((score > 0) and (x.first > maxc or (x.first == maxc and x.second < maxp))
+    // other conditions:  ((score > max_score) or (score == max_score and x.second < maxp)), ((score > 0) and (x.first > maxc or (x.first == maxc and x.second < maxp)))
     if ((score > max_score) or (score == max_score and x.second < maxp)) {
       max_score = score;
       maxp = x.second;
@@ -374,6 +374,9 @@ void getkldiv(const char *inputFile1, const char *inputFile2) {
 
 }
 
+static bool abs_compare(pair<int32_t, tp> a, pair<int32_t, tp> b){
+  return (a.first < b.first);
+}
 void learnbpe(const uint32_t min_freq, const char *inputFile1,
               const char *inputFile2) {
   // get vocab
@@ -408,18 +411,21 @@ void learnbpe(const uint32_t min_freq, const char *inputFile1,
                   where_to_update);
   }
   find_maxp(contiguous_counts, token_counts, min_freq, max_p, max_score, max_c);
-  while (max_score > 0.) {
+  while (max_c > 0.) {
     // create new token for pair. replace
     auto new_token = int_to_token[max_p.first] + int_to_token[max_p.second];
     cout << int_to_token[max_p.first] << " " << int_to_token[max_p.second]
          << " " << max_c << endl;
 
+    //cout << "old counts" << token_counts[max_p.second] << " " << token_counts[max_p.first] << " from " << std::max_element(contiguous_counts.begin(), contiguous_counts.end(), abs_compare)->first << endl;
     uint32_t new_token_id = int_to_token.size();
     int_to_token.push_back(new_token);
     token_to_int[new_token] = new_token_id;
     token_counts.push_back(max_c);
     token_counts[max_p.first] -= max_c;
     if (max_p.second != max_p.first) token_counts[max_p.second] -= max_c;
+    //cout << max_score << endl;
+    //cout << "new counts" << token_counts[max_p.second] << " " << token_counts[max_p.first] << endl;
 
     max_c = 0;
     auto change_count = [&](tp pair, int32_t v, uint32_t wi) {
