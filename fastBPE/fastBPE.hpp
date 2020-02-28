@@ -300,6 +300,7 @@ void find_maxp(vector<pair<int32_t, tp>> &contiguous_counts, vector<int32_t> &to
   float count_entropy = 0.;
   int64_t Ec = 0;
   for (auto const& c: token_counts){
+    if (c!=0)
     count_entropy += ((float) c) * log2((float) c);
     Ec += (int64_t) c;
   }
